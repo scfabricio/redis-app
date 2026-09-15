@@ -15,6 +15,7 @@ var ErrNotFound = errors.New("brand not found")
 type BrandRepository interface {
 	FindByID(context.Context, int64) (domain.Brand, error)
 	ListIDs(context.Context, int) ([]int64, error)
+	UpdateByID(context.Context, int64, domain.Brand) (domain.Brand, error)
 }
 
 type PostgresBrandRepository struct{ pool *pgxpool.Pool }
@@ -51,4 +52,18 @@ func (r *PostgresBrandRepository) ListIDs(ctx context.Context, limit int) ([]int
 		ids = append(ids, id)
 	}
 	return ids, rows.Err()
+}
+
+func (r *PostgresBrandRepository) UpdateByID(ctx context.Context, id int64, payload domain.Brand) (domain.Brand, error) {
+	var brand domain.Brand
+	query := `UPDATE brands SET name = $1, country = $2 WHERE id = $3
+	RETURNING id, name, country, created_at`
+	err := r.pool.QueryRow(ctx, query, payload.Name, payload.Country, id).Scan(&brand.ID, &brand.Name, &brand.Country, &brand.CreatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.Brand{}, ErrNotFound
+	}
+	if err != nil {
+		return domain.Brand{}, fmt.Errorf("query brand: %w", err)
+	}
+	return brand, nil
 }

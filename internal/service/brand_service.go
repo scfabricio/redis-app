@@ -47,6 +47,17 @@ func (s *BrandService) FindByID(ctx context.Context, id int64) (domain.Brand, So
 	return brand, SourceDatabase, nil
 }
 
+func (s *BrandService) UpdateByID(ctx context.Context, id int64, payload domain.Brand) (domain.Brand, error) {
+	brand, err := s.repo.UpdateByID(ctx, id, payload)
+	if err != nil {
+		return domain.Brand{}, fmt.Errorf("find brand: %w", err)
+	}
+	if err := s.cache.Delete(ctx, id); err != nil {
+		s.logger.Warn("could not delete cache brand", "error", err)
+	}
+	return brand, nil
+}
+
 func (s *BrandService) ClearCache(ctx context.Context, ids []int64) error {
 	for _, id := range ids {
 		if err := s.cache.Delete(ctx, id); err != nil {

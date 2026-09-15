@@ -4,16 +4,19 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 	"github.com/scfabricio/redis-app/internal/cache"
 	"github.com/scfabricio/redis-app/internal/config"
+	"github.com/scfabricio/redis-app/internal/domain"
 	"github.com/scfabricio/redis-app/internal/repository"
 	"github.com/scfabricio/redis-app/internal/service"
 )
@@ -65,6 +68,46 @@ func main() {
 		w.Header().Set("X-Data-Source", string(source))
 		writeJSON(w, http.StatusOK, brand)
 	})
+	mux.HandleFunc("PUT /brands/{id}", func(w http.ResponseWriter, r *http.Request) {
+		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil || id < 1 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "id must be a positive integer"})
+			return
+		}
+		var payload struct {
+			Name    string `json:"name"`
+			Country string `json:"country"`
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+		decoder := json.NewDecoder(r.Body)
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&payload); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "body must be valid JSON with name and country"})
+			return
+		}
+		if err := ensureSingleJSONValue(decoder); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "body must contain only one JSON object"})
+			return
+		}
+		payload.Name = strings.TrimSpace(payload.Name)
+		payload.Country = strings.TrimSpace(payload.Country)
+		if payload.Name == "" || payload.Country == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name and country are required"})
+			return
+		}
+
+		brand, err := brands.UpdateByID(r.Context(), id, domain.Brand{Name: payload.Name, Country: payload.Country})
+		if errors.Is(err, repository.ErrNotFound) {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "brand not found"})
+			return
+		}
+		if err != nil {
+			logger.Error("update brand", "error", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+			return
+		}
+		writeJSON(w, http.StatusOK, brand)
+	})
 	server := &http.Server{Addr: cfg.HTTPAddr, Handler: logging(logger, mux), ReadHeaderTimeout: 5 * time.Second}
 	logger.Info("api started", "address", cfg.HTTPAddr, "cache_ttl", service.BrandTTL)
 	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -78,6 +121,15 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(value)
 }
+
+func ensureSingleJSONValue(decoder *json.Decoder) error {
+	var extra any
+	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
+		return errors.New("more than one JSON value")
+	}
+	return nil
+}
+
 func logging(logger *slog.Logger, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		started := time.Now()
