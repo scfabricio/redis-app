@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/scfabricio/redis-app/internal/domain"
+	"github.com/scfabricio/redis-app/internal/event"
 	"github.com/scfabricio/redis-app/internal/repository"
 )
 
@@ -57,6 +58,18 @@ type fakeBrandCache struct {
 	deletedID   int64
 }
 
+type fakeEventPublisher struct {
+	err      error
+	calls    int
+	received event.BrandUpdated
+}
+
+func (f *fakeEventPublisher) PublishBrandUpdated(_ context.Context, received event.BrandUpdated) error {
+	f.calls++
+	f.received = received
+	return f.err
+}
+
 func (f *fakeBrandCache) Get(_ context.Context, id int64) (domain.Brand, bool, error) {
 	f.getCalls++
 	f.requestedID = id
@@ -88,6 +101,7 @@ func TestBrandServiceUpdateByID(t *testing.T) {
 		name            string
 		repositoryErr   error
 		cacheErr        error
+		publishErr      error
 		want            domain.Brand
 		wantErr         error
 		wantDeleteCalls int
@@ -115,6 +129,12 @@ func TestBrandServiceUpdateByID(t *testing.T) {
 			want:            updated,
 			wantDeleteCalls: 1,
 		},
+		{
+			name:            "returns updated brand when event publication fails",
+			publishErr:      errors.New("redis publish unavailable"),
+			want:            updated,
+			wantDeleteCalls: 1,
+		},
 	}
 
 	for _, tt := range tests {
@@ -122,8 +142,9 @@ func TestBrandServiceUpdateByID(t *testing.T) {
 			t.Parallel()
 			repo := &fakeBrandRepository{updated: updated, updateErr: tt.repositoryErr}
 			cache := &fakeBrandCache{deleteErr: tt.cacheErr}
+			publisher := &fakeEventPublisher{err: tt.publishErr}
 			logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-			svc := NewBrandService(repo, cache, logger)
+			svc := NewBrandService(repo, cache, publisher, logger)
 
 			got, err := svc.UpdateByID(context.Background(), updated.ID, payload)
 
@@ -147,6 +168,24 @@ func TestBrandServiceUpdateByID(t *testing.T) {
 			}
 			if tt.wantDeleteCalls == 1 && cache.deletedID != updated.ID {
 				t.Errorf("cache deleted ID = %d, want %d", cache.deletedID, updated.ID)
+			}
+			wantPublishCalls := 0
+			if tt.repositoryErr == nil {
+				wantPublishCalls = 1
+			}
+			if publisher.calls != wantPublishCalls {
+				t.Errorf("publish calls = %d, want %d", publisher.calls, wantPublishCalls)
+			}
+			if wantPublishCalls == 1 {
+				if publisher.received.Type != "brand.updated" {
+					t.Errorf("event type = %q, want brand.updated", publisher.received.Type)
+				}
+				if publisher.received.OccurredAt.IsZero() {
+					t.Error("event occurredAt must be set")
+				}
+				if !reflect.DeepEqual(publisher.received.Brand, updated) {
+					t.Errorf("event brand = %#v, want %#v", publisher.received.Brand, updated)
+				}
 			}
 		})
 	}
@@ -228,7 +267,7 @@ func TestBrandServiceFindByID(t *testing.T) {
 				setErr:   tt.cacheSetErr,
 			}
 			logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-			svc := NewBrandService(repo, cache, logger)
+			svc := NewBrandService(repo, cache, &fakeEventPublisher{}, logger)
 
 			gotBrand, gotSource, err := svc.FindByID(context.Background(), id)
 

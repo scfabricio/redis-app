@@ -13,6 +13,7 @@ import (
 	"github.com/redis/go-redis/v9"
 	"github.com/scfabricio/redis-app/internal/cache"
 	"github.com/scfabricio/redis-app/internal/config"
+	"github.com/scfabricio/redis-app/internal/event"
 	"github.com/scfabricio/redis-app/internal/repository"
 	"github.com/scfabricio/redis-app/internal/service"
 )
@@ -53,7 +54,7 @@ func main() {
 		panic("no brands available")
 	}
 	ids = repeat(ids, *count)
-	service := service.NewBrandService(repo, cache.NewRedisBrandCache(redisClient), slog.New(slog.NewTextHandler(os.Stderr, nil)))
+	service := service.NewBrandService(repo, cache.NewRedisBrandCache(redisClient), event.NewRedisPublisher(redisClient), slog.New(slog.NewTextHandler(os.Stderr, nil)))
 	fmt.Printf("Benchmark: %d queries; cache TTL: %s\n\n", len(ids), serviceTTL())
 	print("database only", runDatabase(ctx, repo, ids))
 	if err := service.ClearCache(ctx, ids); err != nil {

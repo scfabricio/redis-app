@@ -17,6 +17,7 @@ import (
 	"github.com/scfabricio/redis-app/internal/cache"
 	"github.com/scfabricio/redis-app/internal/config"
 	"github.com/scfabricio/redis-app/internal/domain"
+	"github.com/scfabricio/redis-app/internal/event"
 	"github.com/scfabricio/redis-app/internal/repository"
 	"github.com/scfabricio/redis-app/internal/service"
 )
@@ -44,7 +45,7 @@ func main() {
 	if err := redisClient.Ping(ctx).Err(); err != nil {
 		logger.Warn("redis unavailable; requests will use database", "error", err)
 	}
-	brands := service.NewBrandService(repository.NewPostgresBrandRepository(pool), cache.NewRedisBrandCache(redisClient), logger)
+	brands := service.NewBrandService(repository.NewPostgresBrandRepository(pool), cache.NewRedisBrandCache(redisClient), event.NewRedisPublisher(redisClient), logger)
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})

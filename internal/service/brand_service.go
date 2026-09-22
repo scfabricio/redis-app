@@ -8,6 +8,7 @@ import (
 
 	"github.com/scfabricio/redis-app/internal/cache"
 	"github.com/scfabricio/redis-app/internal/domain"
+	"github.com/scfabricio/redis-app/internal/event"
 	"github.com/scfabricio/redis-app/internal/repository"
 )
 
@@ -23,11 +24,12 @@ const (
 type BrandService struct {
 	repo   repository.BrandRepository
 	cache  cache.BrandCache
+	events event.Publisher
 	logger *slog.Logger
 }
 
-func NewBrandService(repo repository.BrandRepository, cache cache.BrandCache, logger *slog.Logger) *BrandService {
-	return &BrandService{repo: repo, cache: cache, logger: logger}
+func NewBrandService(repo repository.BrandRepository, cache cache.BrandCache, events event.Publisher, logger *slog.Logger) *BrandService {
+	return &BrandService{repo: repo, cache: cache, events: events, logger: logger}
 }
 
 func (s *BrandService) FindByID(ctx context.Context, id int64) (domain.Brand, Source, error) {
@@ -54,6 +56,13 @@ func (s *BrandService) UpdateByID(ctx context.Context, id int64, payload domain.
 	}
 	if err := s.cache.Delete(ctx, id); err != nil {
 		s.logger.Warn("could not delete cache brand", "error", err)
+	}
+	if err := s.events.PublishBrandUpdated(ctx, event.BrandUpdated{
+		Type:       "brand.updated",
+		OccurredAt: time.Now().UTC(),
+		Brand:      brand,
+	}); err != nil {
+		s.logger.Warn("could not publish brand updated event", "error", err, "brand_id", id)
 	}
 	return brand, nil
 }

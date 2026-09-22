@@ -14,21 +14,37 @@ type Config struct {
 	HTTPAddr      string
 }
 
+type RedisConfig struct {
+	RedisAddr     string
+	RedisPassword string
+	RedisDB       int
+}
+
 func Load() (Config, error) {
+	redis, err := LoadRedis()
+	if err != nil {
+		return Config{}, err
+	}
 	cfg := Config{
 		DatabaseURL:   os.Getenv("DATABASE_URL"),
-		RedisAddr:     valueOr("REDIS_ADDR", "localhost:6379"),
-		RedisPassword: os.Getenv("REDIS_PASSWORD"),
+		RedisAddr:     redis.RedisAddr,
+		RedisPassword: redis.RedisPassword,
+		RedisDB:       redis.RedisDB,
 		HTTPAddr:      valueOr("HTTP_ADDR", ":8080"),
 	}
 	if cfg.DatabaseURL == "" {
 		return Config{}, fmt.Errorf("DATABASE_URL is required")
 	}
+	return cfg, nil
+}
+
+func LoadRedis() (RedisConfig, error) {
+	cfg := RedisConfig{RedisAddr: valueOr("REDIS_ADDR", "localhost:6379"), RedisPassword: os.Getenv("REDIS_PASSWORD")}
 	var err error
 	if raw := valueOr("REDIS_DB", "0"); raw != "" {
 		cfg.RedisDB, err = strconv.Atoi(raw)
 		if err != nil {
-			return Config{}, fmt.Errorf("invalid REDIS_DB: %w", err)
+			return RedisConfig{}, fmt.Errorf("invalid REDIS_DB: %w", err)
 		}
 	}
 	return cfg, nil
